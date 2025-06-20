@@ -251,7 +251,7 @@
             await using var stream = uploadedAudio.OpenReadStream(maxAllowedSize: 20_000_000);
             var fileContent = new StreamContent(stream);
             fileContent.Headers.ContentType = new MediaTypeHeaderValue(uploadedAudio.ContentType);
-            content.Add(content: fileContent, name: "file", fileName: uploadedAudio.Name);
+            content.Add(content: fileContent, name: "audio", fileName: uploadedAudio.Name);
 
             var response = await client.PostAsync("transcribe", content);
 
