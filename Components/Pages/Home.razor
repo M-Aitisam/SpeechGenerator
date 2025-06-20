@@ -1,0 +1,383 @@
+﻿@page "/"
+@using System.Net.Http.Headers
+@using Microsoft.AspNetCore.Components.Forms
+@using System.Text.Json
+@using Microsoft.JSInterop
+@using System.Text
+@using System.Net.Sockets
+@inject IHttpClientFactory HttpClientFactory
+@inject IJSRuntime JSRuntime
+@inject ILogger<Home> Logger
+@rendermode InteractiveServer
+
+<h3 class="mb-4 text-center text-primary">
+    <i class="fas fa-microphone-alt me-2"></i>Speech Tools
+    <small class="text-muted d-block mt-1 fs-6">Convert between speech and text</small>
+</h3>
+
+<div class="row g-4">
+    <!-- Speech to Text Section -->
+    <div class="col-md-6">
+        <div class="card shadow-sm h-100">
+            <div class="card-header bg-primary text-white">
+                <h4 class="mb-0"><i class="fas fa-microphone me-2"></i>Speech to Text</h4>
+            </div>
+            <div class="card-body">
+                <EditForm Model="@this" OnValidSubmit="@HandleTranscribe">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Select audio file:</label>
+                        <InputFile class="form-control" OnChange="@HandleAudioFileChange"
+                                   accept=".wav,.mp3,.m4a,audio/*" />
+                        <div class="form-text">Supports WAV, MP3, M4A (max 20MB)</div>
+                    </div>
+
+                    <div class="d-flex justify-content-between align-items-center">
+                        <button class="btn btn-primary" type="submit" disabled="@uploading">
+                            @if (uploading)
+                            {
+                                <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                            }
+                            <i class="fas fa-transcribe me-2"></i>@(uploading ? "Processing..." : "Transcribe")
+                        </button>
+
+                        @if (uploadedAudio != null)
+                        {
+                            <span class="badge bg-info text-dark">
+                                <i class="fas fa-file-audio me-1"></i>@uploadedAudio.Name
+                                <small>(@((uploadedAudio.Size / 1024f).ToString("0.00")) KB)</small>
+                            </span>
+                        }
+                    </div>
+                </EditForm>
+
+                @if (!string.IsNullOrEmpty(transcriptionError))
+                {
+                    <div class="alert alert-danger mt-3">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        <strong>Error:</strong> @transcriptionError
+
+                        @if (transcriptionError.Contains("unavailable") ||
+                       transcriptionError.Contains("Could not connect"))
+                        {
+                            <div class="mt-2">
+                                <small>
+                                    The transcription service appears to be offline. Please try again later.
+                                </small>
+                            </div>
+                        }
+                        else if (transcriptionError.Contains("timed out"))
+                        {
+                            <div class="mt-2">
+                                <small>
+                                    Try a shorter audio file (under 2 minutes) or check your network connection.
+                                </small>
+                            </div>
+                        }
+                        else if (transcriptionError.Contains("too large"))
+                        {
+                            <div class="mt-2">
+                                <small>Please select a file smaller than 20MB.</small>
+                            </div>
+                        }
+                    </div>
+                }
+
+                @if (!string.IsNullOrEmpty(transcriptionResult))
+                {
+                    <div class="mt-3">
+                        <h5 class="text-success"><i class="fas fa-comment-dots me-2"></i>Transcription Result:</h5>
+                        <div class="p-3 bg-light rounded border">
+                            <p class="mb-0">@transcriptionResult</p>
+                        </div>
+                        <button class="btn btn-sm btn-outline-secondary mt-2" @onclick="() => CopyToClipboard(transcriptionResult)">
+                            <i class="fas fa-copy me-1"></i>Copy Text
+                        </button>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <!-- Text to Speech Section -->
+    <div class="col-md-6">
+        <div class="card shadow-sm h-100">
+            <div class="card-header bg-success text-white">
+                <h4 class="mb-0"><i class="fas fa-volume-up me-2"></i>Text to Speech</h4>
+            </div>
+            <div class="card-body">
+                <EditForm Model="@this" OnValidSubmit="@HandleTTS">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Enter text:</label>
+                        <InputTextArea class="form-control" rows="4" @bind-Value="@textToSpeak"
+                                       placeholder="Type what you want to convert to speech..." />
+                    </div>
+
+                    <div class="row g-2 mb-3">
+                        <div class="col-md-8">
+                            <label class="form-label fw-bold">Speaker Voice:</label>
+                            <select class="form-select" @bind="@speaker">
+                                <option value="lisa">Lisa</option>
+                                <option value="bob">Bob</option>
+                                <option value="charlie">Charlie</option>
+                                <option value="ginny">Ginny</option>
+                                <option value="eva">Eva</option>
+                                <option value="emily">Emily</option>
+                                <option value="mark">Mark</option>
+                                <option value="susan">Susan</option>
+                                <option value="mike">Mike</option>
+                            </select>
+                            <small class="text-muted">Select from available voices</small>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold">Speed:</label>
+                            <select class="form-select" @bind="@speechSpeed">
+                                <option value="1.0">Normal</option>
+                                <option value="0.8">Slow</option>
+                                <option value="1.2">Fast</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <button class="btn btn-success" type="submit" disabled="@ttsProcessing">
+                        @if (ttsProcessing)
+                        {
+                            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                        }
+                        <i class="fas fa-wave-square me-2"></i>@(ttsProcessing ? "Generating..." : "Generate Speech")
+                    </button>
+                </EditForm>
+
+                @if (!string.IsNullOrEmpty(ttsError))
+                {
+                    <div class="alert alert-danger mt-3">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        @if (ttsError.Contains("Unknown speaker name"))
+                        {
+                            <span>
+                                Invalid speaker selected. Please choose from:
+                                <strong>Lisa, Bob, Charlie, Ginny, Eva, Emily, Mark, Susan, Mike</strong>
+                            </span>
+                        }
+                        else
+                        {
+                            @ttsError
+                        }
+                    </div>
+                }
+
+                @if (!string.IsNullOrEmpty(audioUrl))
+                {
+                    <div class="mt-3">
+                        <h5 class="text-success"><i class="fas fa-music me-2"></i>Generated Audio:</h5>
+                        <audio controls class="w-100 mt-2" src="@audioUrl"></audio>
+                        <div class="d-flex justify-content-end mt-2">
+                            <a href="@audioUrl" download="speech-output.wav" class="btn btn-sm btn-outline-primary">
+                                <i class="fas fa-download me-1"></i>Download
+                            </a>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    // Speech to Text
+    private IBrowserFile? uploadedAudio;
+    private string transcriptionResult = string.Empty;
+    private string transcriptionError = string.Empty;
+    private bool uploading = false;
+
+    // Text to Speech
+    private string textToSpeak = string.Empty;
+    private string speaker = "lisa";
+    private string speechSpeed = "1.0";
+    private string audioUrl = string.Empty;
+    private string ttsError = string.Empty;
+    private bool ttsProcessing = false;
+
+    private async Task HandleAudioFileChange(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            transcriptionError = string.Empty;
+            var file = e.File;
+
+            // Validate file size (20MB max)
+            if (file.Size > 20_000_000)
+            {
+                transcriptionError = "File too large (max 20MB)";
+                return;
+            }
+
+            // Validate file type
+            var allowedTypes = new[] { "audio/wav", "audio/mpeg", "audio/mp3", "audio/m4a", "audio/x-m4a" };
+            if (!allowedTypes.Contains(file.ContentType))
+            {
+                transcriptionError = $"Unsupported file type: {file.ContentType}. Please use WAV, MP3, or M4A.";
+                return;
+            }
+
+            uploadedAudio = file;
+        }
+        catch (Exception ex)
+        {
+            transcriptionError = $"Error selecting file: {ex.Message}";
+            Logger.LogError(ex, "File selection error");
+        }
+    }
+
+    private async Task HandleTranscribe()
+    {
+        if (uploadedAudio == null)
+        {
+            transcriptionError = "Please select an audio file first";
+            return;
+        }
+
+        uploading = true;
+        transcriptionError = string.Empty;
+        transcriptionResult = string.Empty;
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("TranscriptionClient");
+            using var content = new MultipartFormDataContent();
+
+            Logger.LogInformation($"Starting transcription for {uploadedAudio.Name}");
+
+            await using var stream = uploadedAudio.OpenReadStream(maxAllowedSize: 20_000_000);
+            var fileContent = new StreamContent(stream);
+            fileContent.Headers.ContentType = new MediaTypeHeaderValue(uploadedAudio.ContentType);
+            content.Add(content: fileContent, name: "file", fileName: uploadedAudio.Name);
+
+            var response = await client.PostAsync("transcribe", content);
+
+            if (response.IsSuccessStatusCode)
+            {
+                var responseContent = await response.Content.ReadAsStringAsync();
+                try
+                {
+                    // Try to parse as JSON
+                    using var json = JsonSerializer.Deserialize<JsonDocument>(responseContent);
+                    if (json.RootElement.TryGetProperty("transcription", out var transcription))
+                    {
+                        transcriptionResult = transcription.GetString();
+                    }
+                    else
+                    {
+                        // If no transcription property, use raw response
+                        transcriptionResult = responseContent;
+                    }
+                }
+                catch (JsonException)
+                {
+                    // If not JSON, use raw response
+                    transcriptionResult = responseContent;
+                }
+            }
+            else
+            {
+                var errorContent = await response.Content.ReadAsStringAsync();
+                transcriptionError = $"Transcription failed ({(int)response.StatusCode})";
+
+                if (!string.IsNullOrEmpty(errorContent))
+                {
+                    try
+                    {
+                        var errorJson = JsonSerializer.Deserialize<JsonDocument>(errorContent);
+                        if (errorJson.RootElement.TryGetProperty("error", out var error))
+                        {
+                            transcriptionError += $": {error.GetString()}";
+                        }
+                    }
+                    catch
+                    {
+                        transcriptionError += $": {errorContent}";
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            transcriptionError = $"An error occurred: {ex.Message}";
+            Logger.LogError(ex, "Transcription error");
+        }
+        finally
+        {
+            uploading = false;
+        }
+    }
+
+    private async Task HandleTTS()
+    {
+        if (string.IsNullOrWhiteSpace(textToSpeak))
+        {
+            ttsError = "Please enter some text first";
+            return;
+        }
+
+        ttsProcessing = true;
+        ttsError = string.Empty;
+        audioUrl = string.Empty;
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("TTSClient");
+            var payload = new
+            {
+                text = textToSpeak,
+                speaker,
+                speed = double.Parse(speechSpeed)
+            };
+
+            var jsonContent = new StringContent(
+                JsonSerializer.Serialize(payload),
+                Encoding.UTF8,
+                "application/json");
+
+            var response = await client.PostAsync("api/speak", jsonContent);
+
+            if (response.IsSuccessStatusCode)
+            {
+                var audioBytes = await response.Content.ReadAsByteArrayAsync();
+                audioUrl = $"data:audio/wav;base64,{Convert.ToBase64String(audioBytes)}";
+            }
+            else
+            {
+                var errorContent = await response.Content.ReadAsStringAsync();
+                try
+                {
+                    var errorJson = JsonSerializer.Deserialize<JsonDocument>(errorContent);
+                    ttsError = errorJson.RootElement.GetProperty("error").GetString();
+                }
+                catch
+                {
+                    ttsError = $"Error: {errorContent}";
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            ttsError = $"An error occurred: {ex.Message}";
+            Logger.LogError(ex, "TTS generation error");
+        }
+        finally
+        {
+            ttsProcessing = false;
+        }
+    }
+
+    private async Task CopyToClipboard(string text)
+    {
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("navigator.clipboard.writeText", text);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to copy text");
+        }
+    }
+}
