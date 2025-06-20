@@ -116,9 +116,13 @@ Deployment
 To Azure/AWS App Service:
 az webapp up --name your-app-name --resource-group your-resource-group --runtime-dotnet=8.0
 
-Docker:
+###Docker:
+
 docker build -t speech-tools .
+
 docker run -p 5000:80 speech-tools
+
+![image](https://github.com/user-attachments/assets/fdefea61-f02f-4d5a-9dde-2beb3639ac97)
 
 Contributing
 Fork the project
@@ -131,10 +135,10 @@ Push to the branch (git push origin feature/AmazingFeature)
 
 Open a Pull Request
 
-License
+###License
 Distributed under the MIT License. See LICENSE for more information.
 
-Contact
+###Contact
 Your Name - @aitisam - aitisamahmed@gmail.com
 
 Project Link: https://github.com/M-Aitisam/SpeechGenerator
